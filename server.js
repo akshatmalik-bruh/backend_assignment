@@ -1,5 +1,6 @@
 import express from "express";
 import helmet from "helmet";
+import cors from "cors";
 import { PORT } from "./config.js";
 import connection from "./db/connection.js";
 import authRouter from "./auth/auth.router.js";
@@ -9,6 +10,7 @@ import liveRouter from "./live/live.router.js";
 
 const app = express();
 
+app.use(cors());
 app.use(helmet());
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
