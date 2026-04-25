@@ -1,0 +1,50 @@
+ARCHITECTURE NOTES - CONTENT BROADCASTING SYSTEM
+
+1. Authentication & RBAC Flow:
+   - Implemented using JWT (JSON Web Tokens) with a standard Bearer strategy.
+   - RBAC is enforced at two layers:
+     a) Middleware layer: Intercepts requests to check for valid tokens.
+     b) Service layer: Validates the user role (Principal vs. Teacher) before executing business logic.
+   - Passwords are salted and hashed using bcrypt for maximum security.
+
+2. Database Design Decisions:
+   - Used PostgreSQL (via Supabase) for its robust relational features and support for complex querying.
+   - Implemented a one-to-many relationship between Users and Content.
+   - Used UUIDs for primary keys to ensure global uniqueness and obfuscate object counts from potential attackers.
+   - The 'Content' table includes fields for both lifecycle (status, rejection_reason) and scheduling (startTime, endTime, rotationDuration).
+
+3. Upload Handling Approach:
+   - Utilized Multer for multi-part/form-data processing.
+   - Implemented a disk-storage strategy to save files locally in the /uploads folder.
+   - Enforced security filters: restricted file types to images (JPG, PNG, GIF) and limited file size to 10MB to prevent Denial of Service (DoS) attacks.
+
+4. Approval Workflow Design:
+   - Follows a strict state machine: uploaded -> pending -> approved/rejected.
+   - Only the Principal role has the authority to transition content from 'pending' to 'approved' or 'rejected'.
+   - Rejection requires a mandatory reason, ensuring transparency in the teacher's feedback loop.
+
+5. Scheduling & Rotation Logic (CORE LOGIC):
+   - Dynamic Scheduling: The system uses the 'now()' timestamp to filter content that is within its active time window.
+   - Subject-Based Rotation: Each subject (Maths, Science, etc.) calculates its own rotation independently.
+   - Algorithm:
+     a) Fetch all active/approved content for a teacher.
+     b) Sum the total rotation duration for the specific subject group.
+     c) Calculate the current time offset using: `currentTime % totalDuration`.
+     d) Iterate through items and select the one where the offset falls within its specific duration slot.
+   - This approach ensures a continuous, seamless loop without needing manual cron jobs.
+
+6. Folder Structure:
+   - Follows a modular Service-Controller-Route (SCR) pattern.
+   - Modules: Auth, Upload, Principal, Live.
+   - This ensures clean separation of concerns and makes the codebase highly maintainable and testable.
+
+7. Middleware Usage:
+   - authMiddleware: Protects private routes and attaches user context.
+   - uploadMiddleware: Handles multi-part data and file validation.
+   - helmet: Integrated to secure HTTP headers.
+   - express.json(): Standard JSON parsing.
+
+8. Scalability Approach:
+   - Singleton Pattern: The Prisma client is implemented as a singleton to prevent connection pool exhaustion.
+   - Driver Adapters: Used @prisma/adapter-pg for high-performance direct database access.
+   - Future Scalability: The system is designed to support Redis caching for the /live endpoint and S3 storage for files with minimal code changes.
