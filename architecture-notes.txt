@@ -1,50 +1,52 @@
-ARCHITECTURE NOTES - CONTENT BROADCASTING SYSTEM
+INTENSIVE ARCHITECTURE DOCUMENTATION - CONTENT BROADCASTING SYSTEM
 
-1. Authentication & RBAC Flow:
-   - Implemented using JWT (JSON Web Tokens) with a standard Bearer strategy.
-   - RBAC is enforced at two layers:
-     a) Middleware layer: Intercepts requests to check for valid tokens.
-     b) Service layer: Validates the user role (Principal vs. Teacher) before executing business logic.
-   - Passwords are salted and hashed using bcrypt for maximum security.
+1. ARCHITECTURAL PATTERN: SEPARATION OF CONCERNS (SoC)
+------------------------------------------------------
+The system is built using a strict modular SCR (Service-Controller-Route) architecture:
+- Routes: Define the entry points and apply specific middlewares (Auth, Multer).
+- Controllers: Handle request parsing, validation (Zod), and HTTP response formatting.
+- Services: Contain the pure business logic and interact with the database via Prisma.
+Benefit: This decoupled design allows for independent testing of business logic without needing to mock HTTP requests, ensuring high maintainability.
 
-2. Database Design Decisions:
-   - Used PostgreSQL (via Supabase) for its robust relational features and support for complex querying.
-   - Implemented a one-to-many relationship between Users and Content.
-   - Used UUIDs for primary keys to ensure global uniqueness and obfuscate object counts from potential attackers.
-   - The 'Content' table includes fields for both lifecycle (status, rejection_reason) and scheduling (startTime, endTime, rotationDuration).
+2. AUTHENTICATION & RBAC (DEFENSE-IN-DEPTH)
+-------------------------------------------
+- Strategy: Stateless JWT authentication using the HS256 algorithm.
+- Security Layers:
+  a) Global Auth Middleware: Verifies token integrity and decodes the payload into `req.user`.
+  b) Controller-Level RBAC: Immediate rejection of unauthorized roles (e.g., Teachers trying to access Principal endpoints).
+  c) Service-Level Validation: A final check inside the business logic layer to prevent any potential middleware bypasses.
+- Password Security: Industry-standard Bcrypt hashing with a cost factor (salt rounds) optimized for security vs. performance.
 
-3. Upload Handling Approach:
-   - Utilized Multer for multi-part/form-data processing.
-   - Implemented a disk-storage strategy to save files locally in the /uploads folder.
-   - Enforced security filters: restricted file types to images (JPG, PNG, GIF) and limited file size to 10MB to prevent Denial of Service (DoS) attacks.
+3. DETERMINISTIC SCHEDULING & ROTATION ENGINE
+---------------------------------------------
+This is the system's most complex component. Unlike a naive "random" picker, this uses a deterministic algorithm based on the Unix epoch.
+- Mathematical Logic:
+  1. Filter: Identify all content where [status=approved] AND [startTime <= current_time <= endTime].
+  2. Group: Partition active items by 'subject'.
+  3. Calculate Total Cycle: `TotalCycleTime = Σ(rotationDuration_i)`.
+  4. Calculate Current Offset: `CurrentOffset = Date.now() % TotalCycleTime`.
+  5. Selection: Iterate through the sorted list. If the CurrentOffset falls within the time-range of an item, that item is returned as "Live".
+- Efficiency: O(n) time complexity where n is the number of active items per subject (typically very small). This avoids the need for heavy cron jobs or worker threads.
 
-4. Approval Workflow Design:
-   - Follows a strict state machine: uploaded -> pending -> approved/rejected.
-   - Only the Principal role has the authority to transition content from 'pending' to 'approved' or 'rejected'.
-   - Rejection requires a mandatory reason, ensuring transparency in the teacher's feedback loop.
+4. DATABASE DESIGN & DATA INTEGRITY
+-----------------------------------
+- ORM: Prisma 7 (using Driver Adapters for direct PG access via @prisma/adapter-pg).
+- Connection Management: Implemented a Singleton pattern for the PrismaClient to prevent connection leaks (critical for serverless or containerized deployments like Render).
+- Integrity: Used Prisma Enums for 'Role' and 'Status' to ensure data consistency at the database level.
+- Relationships: Established a strong User-to-Content relation to track ownership and uploader accountability.
 
-5. Scheduling & Rotation Logic (CORE LOGIC):
-   - Dynamic Scheduling: The system uses the 'now()' timestamp to filter content that is within its active time window.
-   - Subject-Based Rotation: Each subject (Maths, Science, etc.) calculates its own rotation independently.
-   - Algorithm:
-     a) Fetch all active/approved content for a teacher.
-     b) Sum the total rotation duration for the specific subject group.
-     c) Calculate the current time offset using: `currentTime % totalDuration`.
-     d) Iterate through items and select the one where the offset falls within its specific duration slot.
-   - This approach ensures a continuous, seamless loop without needing manual cron jobs.
+5. FILE MANAGEMENT & STATIC ASSET DELIVERY
+------------------------------------------
+- Strategy: Local Disk Storage using Multer.
+- Security:
+  - Filename Sanitization: Prefixed with `Date.now()` to prevent collisions.
+  - MIME Filtering: Strict allow-list (JPG, PNG, GIF).
+  - Buffer Protection: 10MB hard-limit on file size.
+- Delivery: Served via `express.static`, allowing the server to handle file streaming without loading the entire asset into memory.
 
-6. Folder Structure:
-   - Follows a modular Service-Controller-Route (SCR) pattern.
-   - Modules: Auth, Upload, Principal, Live.
-   - This ensures clean separation of concerns and makes the codebase highly maintainable and testable.
+6. EDGE CASE HANDLING
+---------------------
+- Empty State: If no content is active/approved, the system returns a specific 200 response with a "No content available" message (not an error), as per the business requirements.
+- Expired Content: The rotation engine automatically purges expired content from the "Live" view without requiring a manual update.
+- Invalid Subjects: Subject filtering is implemented using optional Prisma where clauses, handling missing or misspelled subjects gracefully.
 
-7. Middleware Usage:
-   - authMiddleware: Protects private routes and attaches user context.
-   - uploadMiddleware: Handles multi-part data and file validation.
-   - helmet: Integrated to secure HTTP headers.
-   - express.json(): Standard JSON parsing.
-
-8. Scalability Approach:
-   - Singleton Pattern: The Prisma client is implemented as a singleton to prevent connection pool exhaustion.
-   - Driver Adapters: Used @prisma/adapter-pg for high-performance direct database access.
-   - Future Scalability: The system is designed to support Redis caching for the /live endpoint and S3 storage for files with minimal code changes.

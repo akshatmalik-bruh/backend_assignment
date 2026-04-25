@@ -3,7 +3,6 @@ import prisma from "../utils/prisma.js";
 export const getLiveContentService = async ({ teacherId, subject }) => {
     const now = new Date();
 
-    
     const activeContent = await prisma.content.findMany({
         where: {
             uploadedBy: teacherId,
@@ -21,7 +20,6 @@ export const getLiveContentService = async ({ teacherId, subject }) => {
         return null;
     }
 
-   
     const subjects = [...new Set(activeContent.map(item => item.subject))];
     const liveItems = [];
 
@@ -33,7 +31,6 @@ export const getLiveContentService = async ({ teacherId, subject }) => {
 
         const currentMs = Date.now() % totalRotationMs;
 
-        
         let accumulatedMs = 0;
         let selectedItem = subContent[0];
 
@@ -48,6 +45,5 @@ export const getLiveContentService = async ({ teacherId, subject }) => {
         liveItems.push(selectedItem);
     }
 
-    
     return subject ? liveItems[0] : liveItems;
 };

@@ -17,8 +17,7 @@ const adapter = new PrismaPg(pool);
 
 // 3. Create the instance using the adapter
 const prisma = new PrismaClient({ 
-    adapter,
-    log: ['query', 'error', 'warn'] 
+    adapter
 });
 
 export default prisma;
