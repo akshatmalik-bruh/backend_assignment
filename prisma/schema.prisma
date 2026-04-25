@@ -1,0 +1,93 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  principal
+  teacher
+}
+
+enum ContentStatus {
+  pending
+  approved
+  rejected
+}
+
+
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          Role
+
+  // relations
+  contents      Content[]        @relation("TeacherContent")
+  approvals     Content[]        @relation("PrincipalApproval")
+
+  createdAt     DateTime @default(now())
+}
+
+
+
+model Content {
+  id               String   @id @default(uuid())
+
+  title            String
+  description      String?
+
+  subject          String   // maths, science etc.
+
+  filePath         String
+  fileType         String?
+  fileSize         Int?
+
+  // who uploaded
+  uploadedBy       String
+  uploader         User     @relation("TeacherContent", fields: [uploadedBy], references: [id])
+
+  // status
+  status           ContentStatus @default(pending)
+  rejectionReason  String?
+
+  // approval
+  approvedBy       String?
+  approver         User?    @relation("PrincipalApproval", fields: [approvedBy], references: [id])
+  approvedAt       DateTime?
+
+  // scheduling
+  startTime        DateTime?
+  endTime          DateTime?
+
+  // fallback if no rotation entry
+  rotationDuration Int?
+
+  // relations
+  rotations        ContentRotation[]
+
+  createdAt        DateTime @default(now())
+}
+
+
+
+model ContentRotation {
+  id            String   @id @default(uuid())
+
+  contentId     String
+  content       Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  subject       String   // helps grouping by subject
+  rotationOrder Int      // sequence
+  duration      Int      // minutes
+
+  createdAt     DateTime @default(now())
+
+  @@index([subject])
+  @@index([rotationOrder])
+}
