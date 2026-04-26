@@ -30,6 +30,15 @@ app.use("/upload", uploadRouter);
 app.use("/principal", principalRouter);
 app.use("/content", liveRouter);
 
+// Health Check / Assignment Identity
+app.get("/", (req, res) => {
+    res.status(200).json({
+        message: "Akshat Malik - Backend Assignment API is Live",
+        status: "Healthy",
+        version: "1.0.0"
+    });
+});
+
 connection();
 
 app.listen(PORT, () => {
