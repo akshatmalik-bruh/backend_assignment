@@ -13,7 +13,7 @@
 | 🐙 GitHub Repository | [backend_assignment](https://github.com/akshatmalik-bruh/backend_assignment) |
 | 🚀 Live Deployment | [backend-assignment-m7px.onrender.com](https://backend-assignment-m7px.onrender.com) |
 | 📮 API Documentation | [Postman Collection](https://documenter.getpostman.com/view/45068277/2sBXqGr2E9) |
-| 🎥 Demo Video | **[Insert Video Link]** |
+| 🎥 Demo Video | [Watch Demo](https://drive.google.com/file/d/1KQnnQ2gdi6tmz0kO3ENvs9ds5_yhC5lN/view?usp=drive_link) |
 
 ---
 
