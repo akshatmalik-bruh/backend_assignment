@@ -1,6 +1,7 @@
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
+import { rateLimit } from "express-rate-limit";
 import { PORT } from "./config.js";
 import connection from "./db/connection.js";
 import authRouter from "./auth/auth.router.js";
@@ -10,6 +11,15 @@ import liveRouter from "./live/live.router.js";
 
 const app = express();
 
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, 
+    limit: 100, 
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { message: "Too many requests, please try again later." }
+});
+
+app.use(limiter);
 app.use(cors());
 app.use(helmet());
 app.use(express.json());

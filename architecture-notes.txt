@@ -1,52 +1,347 @@
-INTENSIVE ARCHITECTURE DOCUMENTATION - CONTENT BROADCASTING SYSTEM
 
-1. ARCHITECTURAL PATTERN: SEPARATION OF CONCERNS (SoC)
-------------------------------------------------------
-The system is built using a strict modular SCR (Service-Controller-Route) architecture:
-- Routes: Define the entry points and apply specific middlewares (Auth, Multer).
-- Controllers: Handle request parsing, validation (Zod), and HTTP response formatting.
-- Services: Contain the pure business logic and interact with the database via Prisma.
-Benefit: This decoupled design allows for independent testing of business logic without needing to mock HTTP requests, ensuring high maintainability.
+        CONTENT BROADCASTING SYSTEM — SYSTEM ARCHITECTURE DOCUMENT
+                         Version 1.0  |  Technical Overview
 
-2. AUTHENTICATION & RBAC (DEFENSE-IN-DEPTH)
--------------------------------------------
-- Strategy: Stateless JWT authentication using the HS256 algorithm.
-- Security Layers:
-  a) Global Auth Middleware: Verifies token integrity and decodes the payload into `req.user`.
-  b) Controller-Level RBAC: Immediate rejection of unauthorized roles (e.g., Teachers trying to access Principal endpoints).
-  c) Service-Level Validation: A final check inside the business logic layer to prevent any potential middleware bypasses.
-- Password Security: Industry-standard Bcrypt hashing with a cost factor (salt rounds) optimized for security vs. performance.
 
-3. DETERMINISTIC SCHEDULING & ROTATION ENGINE
----------------------------------------------
-This is the system's most complex component. Unlike a naive "random" picker, this uses a deterministic algorithm based on the Unix epoch.
-- Mathematical Logic:
-  1. Filter: Identify all content where [status=approved] AND [startTime <= current_time <= endTime].
-  2. Group: Partition active items by 'subject'.
-  3. Calculate Total Cycle: `TotalCycleTime = Σ(rotationDuration_i)`.
-  4. Calculate Current Offset: `CurrentOffset = Date.now() % TotalCycleTime`.
-  5. Selection: Iterate through the sorted list. If the CurrentOffset falls within the time-range of an item, that item is returned as "Live".
-- Efficiency: O(n) time complexity where n is the number of active items per subject (typically very small). This avoids the need for heavy cron jobs or worker threads.
 
-4. DATABASE DESIGN & DATA INTEGRITY
------------------------------------
-- ORM: Prisma 7 (using Driver Adapters for direct PG access via @prisma/adapter-pg).
-- Connection Management: Implemented a Singleton pattern for the PrismaClient to prevent connection leaks (critical for serverless or containerized deployments like Render).
-- Integrity: Used Prisma Enums for 'Role' and 'Status' to ensure data consistency at the database level.
-- Relationships: Established a strong User-to-Content relation to track ownership and uploader accountability.
 
-5. FILE MANAGEMENT & STATIC ASSET DELIVERY
-------------------------------------------
-- Strategy: Local Disk Storage using Multer.
-- Security:
-  - Filename Sanitization: Prefixed with `Date.now()` to prevent collisions.
-  - MIME Filtering: Strict allow-list (JPG, PNG, GIF).
-  - Buffer Protection: 10MB hard-limit on file size.
-- Delivery: Served via `express.static`, allowing the server to handle file streaming without loading the entire asset into memory.
+1. SYSTEM OVERVIEW
+--------------------------------------------------------------------------------
 
-6. EDGE CASE HANDLING
----------------------
-- Empty State: If no content is active/approved, the system returns a specific 200 response with a "No content available" message (not an error), as per the business requirements.
-- Expired Content: The rotation engine automatically purges expired content from the "Live" view without requiring a manual update.
-- Invalid Subjects: Subject filtering is implemented using optional Prisma where clauses, handling missing or misspelled subjects gracefully.
+The Content Broadcasting System is a web-based platform that allows teachers to
+upload educational content (images), which goes through a Principal's approval
+before being broadcast to students' devices in real time.
 
+Three core principles guide every design decision:
+
+  - Security       : Only authenticated, authorized users can perform actions
+  - Reliability    : The rotation engine works correctly under any load, any time
+  - Accountability : Every approval or rejection leaves a permanent audit trail
+
+
+
+2. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+
+  Runtime & Framework
+  -------------------
+  Node.js (ES Modules) + Express.js
+  
+  Database
+  --------
+  PostgreSQL, managed via Supabase
+  
+  ORM (Object Relational Mapper)
+  ------------------------------
+  Prisma 7 with Driver Adapters
+  
+
+  Authentication
+  --------------
+  JWT (JSON Web Tokens) + Bcrypt
+  
+
+  Validation
+  ----------
+  Zod
+  
+
+  Security Middleware
+  -------------------
+  Helmet.js + CORS + express-rate-limit
+  
+
+  File Uploads
+  ------------
+  Multer (Disk Storage)
+ 
+
+  Deployment
+  ----------
+  Render (Web Service)
+  
+
+
+
+3. ARCHITECTURAL PATTERN — SEPARATION OF CONCERNS
+--------------------------------------------------------------------------------
+
+The codebase is split into three distinct layers. Each layer has one job and
+does not reach into another layer's responsibility.
+
+  ROUTES  -->  CONTROLLERS  -->  SERVICES  -->  DATABASE
+
+  Routes
+  
+  The entry point for every API call. A route defines the URL path and HTTP
+  method (GET, POST, etc.), then attaches the relevant middleware — such as
+  the auth checker or the file upload handler — before passing control along.
+
+  Controllers
+  
+  The request and response handler. Once a request passes through the route,
+  the controller takes over: it validates the incoming data using Zod, checks
+  that the user has the right role, and formats the final HTTP response.
+
+  Services
+  
+  Where the actual business logic lives. Services decide things like "which
+  content is currently live?" or "is this user allowed to approve content?".
+  They also talk directly to the database through Prisma. Because services have
+  no awareness of HTTP at all, they can be tested independently without needing
+  to simulate network requests.
+
+  Why this matters:
+  If a bug is found in the approval logic, a developer knows to look in the
+  service layer — not in the routes or controllers. This makes the codebase
+  easier to maintain and scale over time.
+
+
+4. AUTHENTICATION & ROLE-BASED ACCESS CONTROL (RBAC)
+--------------------------------------------------------------------------------
+
+The system uses stateless authentication, meaning the server never stores
+session data. Instead, a signed token is issued at login and sent with every
+subsequent request.
+
+  How Login Works
+  
+  1. The user submits their email and password.
+  2. The server verifies the password against the stored Bcrypt hash.
+  3. If valid, a JWT token is created containing the user's ID and role
+     (e.g., Teacher or Principal), then returned to the client.
+  4. The client sends this token in the Authorization header on every request.
+
+  Three Layers of Access Enforcement
+
+  Rather than relying on a single check, access is enforced at three levels:
+
+  Layer 1 — Auth Middleware (Global)
+    Every request passes through this first. It verifies that the JWT token
+    is valid and has not been tampered with. The decoded user identity is
+    attached to the request object for the next layers to use.
+
+  Layer 2 — Controller (Role Check)
+    After the token is verified, the controller immediately checks the user's
+    role. If a Teacher tries to reach a Principal-only endpoint, the request
+    is rejected right here with a 403 Forbidden response.
+
+  Layer 3 — Service (Final Safety Net)
+    The business logic layer performs one last role check. This acts as a
+    defence against any edge case where a request might somehow bypass the
+    middleware above.
+
+  Password Security
+  
+  Passwords are hashed using Bcrypt before being stored. The hashing process
+  is intentionally slow (configurable cost factor), which makes automated
+  password-cracking attacks computationally expensive and impractical.
+
+  Rate Limiting
+
+  Each IP address is limited to 100 requests per 15-minute window. Exceeding
+  this returns a 429 Too Many Requests response, effectively blocking
+  brute-force login attempts and denial-of-service attacks.
+
+
+5. DETERMINISTIC ROTATION ENGINE (LIVE BROADCASTING)
+--------------------------------------------------------------------------------
+
+This is the most technically interesting component of the system. Rather than
+storing "what is playing right now" in the database (which would require
+constant writes), the system calculates the current broadcast mathematically
+on every request.
+
+The Algorithm (Step by Step)
+  ----------------------------
+  Step 1 — Filter
+    Query the database for all approved content where the current time falls
+    within the item's defined start and end time window.
+
+  Step 2 — Group
+    Organize the filtered items by subject (e.g., Maths, Science, English).
+    Each subject runs its own independent rotation.
+
+  Step 3 — Calculate Total Cycle Duration
+    Add up the individual rotation durations of all items in a subject group.
+    This gives the total length of one full rotation cycle.
+
+  Step 4 — Find Current Position
+    Take the current Unix timestamp (milliseconds since Jan 1, 1970) and
+    apply modulo against the total cycle duration. The result tells us exactly
+    where we are within the current rotation cycle.
+
+  Step 5 — Select the Live Item
+    Walk through the sorted list of items. Whichever item's time slot contains
+    the current position is returned as the "Live" broadcast.
+
+  Performance
+  
+  The entire selection runs in memory in linear time — proportional to the
+  number of active items, which is typically very small. No background jobs,
+  scheduled tasks, or cron workers are needed. The system handles this on
+  every request with negligible overhead.
+
+
+
+6. DATABASE DESIGN & DATA INTEGRITY
+--------------------------------------------------------------------------------
+
+  Prisma ORM
+  
+  Acts as a type-safe bridge between JavaScript code and the PostgreSQL
+  database. All queries are written using Prisma's query API rather than raw
+  SQL, which prevents SQL injection and catches type mismatches at development
+  time rather than in production.
+
+  Singleton Database Connection
+  
+  Only one database connection pool is ever created for the entire application
+  lifetime. If multiple requests arrive at the same time, they share this one
+  pool rather than each opening a new connection. This prevents connection
+  exhaustion — a common problem in containerized deployments where connection
+  limits are strict.
+
+  Enums for Role & Status
+  
+  Values like "Teacher", "Principal", "pending", "approved", and "rejected"
+  are defined as Enums and enforced at the database level. This means invalid
+  states can never be stored, even if application-level validation is bypassed.
+
+  User-to-Content Relationship
+  
+  Every piece of content is linked to the user who uploaded it. This gives a
+  full ownership trail — who uploaded what, and when — which is important for
+  accountability and debugging.
+
+
+
+7. FILE UPLOAD & STATIC ASSET DELIVERY
+--------------------------------------------------------------------------------
+
+  Upload Handling
+
+  Files are received and saved to local disk using Multer. Three security rules
+  are enforced at the point of upload:
+
+    File Type  : Only JPG, PNG, and GIF are accepted. The server checks the
+                 actual MIME type, not just the file extension.
+
+    File Size  : A hard limit of 10MB per file. Anything larger is rejected
+                 before it is written to disk.
+
+    Filename   : Each saved file is prefixed with the current Unix timestamp
+                 to guarantee unique filenames and prevent overwrite attacks.
+
+  File Delivery
+  
+  Uploaded files are served to clients using Express's built-in static file
+  handler. This streams the file directly from disk to the client, without
+  loading the entire file into server memory first — keeping delivery fast and
+  memory usage predictable.
+
+
+
+8. CONTENT LIFECYCLE — APPROVAL & REJECTION WORKFLOW
+--------------------------------------------------------------------------------
+
+Content follows a strict, one-directional state machine. Once a state
+transition is made, it cannot be undone by going backwards.
+
+  [ pending ]  -->  [ approved ]   Content enters the broadcast rotation
+  [ pending ]  -->  [ rejected ]   Content is permanently excluded
+
+  Pending
+ 
+  The default state when a teacher uploads content. It is not visible to
+  students and is not part of any rotation until reviewed by a Principal.
+
+  Approved
+ 
+  Only a Principal can approve content. The system records the Principal's ID
+  and the exact timestamp of approval, creating a permanent audit entry.
+
+  Rejected
+  
+  Only a Principal can reject content. A rejection reason is mandatory — the
+  API will not accept a rejection request without one. The reason is stored and
+  returned to the teacher so they understand what needs to change.
+
+  Finality
+  
+  Rejected content is permanently excluded from broadcasting. The teacher must
+  re-upload a new version after addressing the feedback. This prevents rejected
+  content from being accidentally approved later.
+
+
+9. EDGE CASE HANDLING
+--------------------------------------------------------------------------------
+
+  No Active Content
+
+  If no approved content is currently within its active time window, the API
+  returns a clean 200 OK response with a descriptive "No content available"
+  message — not an error code. Student devices handle this gracefully without
+  crashing or showing a broken state.
+
+  Expired Content
+
+  The rotation engine only considers content where the current time falls
+  within the defined start-to-end window. Once a piece of content's window
+  passes, it is automatically excluded from the next request — no manual
+  deletion or scheduled cleanup is required.
+
+  Invalid or Unknown Subjects
+ 
+  If a device requests a subject that does not exist or contains a typo, the
+  system returns an empty result set rather than throwing an error. Filtering
+  is applied using optional query clauses that simply return nothing when no
+  match is found.
+
+
+
+10. STUDENT-FACING BROADCAST ENDPOINT
+--------------------------------------------------------------------------------
+
+  Public Access
+  
+  The broadcast endpoint does not require authentication. Any student device
+  can access it directly with no login step, keeping access friction-free.
+
+  Always Fresh
+ 
+  Every request triggers a live database query. There is no cached "current
+  broadcast" that could go stale. Students always see what is currently
+  approved and active.
+
+  Subject Filtering
+  
+  Devices can pass an optional query parameter to subscribe to a specific
+  subject stream. For example:
+
+    GET /broadcast?subject=Maths
+
+  This returns only content tagged under Maths. If no subject is specified,
+  all active content across all subjects is returned.
+
+  In-Memory Rotation
+  
+  Once the active content is fetched from the database, the rotation selection
+  is computed entirely in memory. No additional database writes are needed to
+  advance the rotation, which keeps latency low even under concurrent load.
+
+
+
+11. SCALABILITY 
+--------------------------------------------------------------------------------
+  
+  Horizontal Scaling
+  
+  Because JWT authentication is stateless and the rotation engine is
+  deterministic, multiple instances of this server can run in parallel behind
+  a load balancer without needing to sync session data or share state. Each
+  instance will independently arrive at the same rotation result for any given
+  moment in time.
+
+
+ 
